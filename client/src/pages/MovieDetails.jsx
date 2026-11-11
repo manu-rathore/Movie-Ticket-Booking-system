@@ -29,6 +29,13 @@ export default function MovieDetails() {
   const [snacks, setSnacks] = useState({});
   const [showSnackModal, setShowSnackModal] = useState(false);
 
+  // Payment Modal state
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState('upi'); // upi, card, netbanking
+  const [paymentProcessing, setPaymentProcessing] = useState(false);
+  const [upiId, setUpiId] = useState('');
+  const [cardData, setCardData] = useState({ number: '', expiry: '', cvv: '', name: '' });
+
   useEffect(() => {
     api.get(`/movies/${id}`)
       .then((r) => setMovie(r.data))
@@ -75,7 +82,8 @@ export default function MovieDetails() {
 
   const ticketPrice = show?.price || 0;
   const seatsTotal = selected.length * ticketPrice;
-  const grandTotal = seatsTotal + snacksTotal;
+  const convFee = selected.length ? 30 : 0; // Convenience fee
+  const grandTotal = seatsTotal + snacksTotal + convFee;
 
   const handleBookClick = () => {
     if (!user) {
@@ -84,34 +92,45 @@ export default function MovieDetails() {
     setShowSnackModal(true);
   };
 
-  const confirmBooking = async () => {
-    setBookingLoading(true);
-    try {
-      const selectedSnacksList = SNACKS_MENU
-        .filter((item) => (snacks[item.id] || 0) > 0)
-        .map((item) => ({
-          name: item.name,
-          qty: snacks[item.id],
-          price: item.price,
-        }));
+  const proceedToPayment = () => {
+    setShowSnackModal(false);
+    setShowPaymentModal(true);
+  };
 
-      await api.post('/bookings', {
-        showId: show._id,
-        seats: selected,
-        snacks: selectedSnacksList,
-        totalAmount: grandTotal,
-      });
+  const processPaymentAndConfirm = async (e) => {
+    if (e) e.preventDefault();
+    setPaymentProcessing(true);
 
-      setShowSnackModal(false);
-      alert('🎉 Badhai ho! Aapki ticket confirm ho gayi hai!');
-      navigate('/my-bookings');
-    } catch (err) {
-      setMsg(errMsg(err));
-      setShowSnackModal(false);
-      pickShow(show);
-    } finally {
-      setBookingLoading(false);
-    }
+    // Simulate real gateway processing delay (1.5 seconds)
+    setTimeout(async () => {
+      try {
+        const selectedSnacksList = SNACKS_MENU
+          .filter((item) => (snacks[item.id] || 0) > 0)
+          .map((item) => ({
+            name: item.name,
+            qty: snacks[item.id],
+            price: item.price,
+          }));
+
+        await api.post('/bookings', {
+          showId: show._id,
+          seats: selected,
+          snacks: selectedSnacksList,
+          totalAmount: grandTotal,
+          paymentMethod: paymentMethod.toUpperCase(),
+        });
+
+        setPaymentProcessing(false);
+        setShowPaymentModal(false);
+        alert('🎉 Payment Successful! Aapki ticket confirm ho gayi hai!');
+        navigate('/my-bookings');
+      } catch (err) {
+        setPaymentProcessing(false);
+        setMsg(errMsg(err));
+        setShowPaymentModal(false);
+        pickShow(show);
+      }
+    }, 1500);
   };
 
   if (!movie) {
@@ -263,12 +282,12 @@ export default function MovieDetails() {
         </div>
       )}
 
-      {/* Snacks & Checkout Modal */}
+      {/* Snacks Modal */}
       {showSnackModal && (
         <div className="modal-overlay">
           <div className="modal-content">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h2 style={{ margin: 0, fontSize: '20px' }}>🍿 Add Snacks & Confirm</h2>
+              <h2 style={{ margin: 0, fontSize: '20px' }}>🍿 Add Snacks & Combos</h2>
               <button
                 className="btn small outline"
                 onClick={() => setShowSnackModal(false)}
@@ -282,7 +301,6 @@ export default function MovieDetails() {
               Apne movie experience ko aur zabardast banayein snacks ke sath!
             </p>
 
-            {/* Snacks options */}
             <div className="snack-grid">
               {SNACKS_MENU.map((item) => (
                 <div key={item.id} className="snack-card">
@@ -324,6 +342,10 @@ export default function MovieDetails() {
                   <span>+₹{snacksTotal}</span>
                 </div>
               )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13.5px', marginBottom: '6px', color: '#94a3b8' }}>
+                <span>Convenience & Service Fee</span>
+                <span>+₹{convFee}</span>
+              </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: 800, marginTop: '8px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
                 <span>Final Payable</span>
                 <span style={{ color: '#10b981' }}>₹{grandTotal}</span>
@@ -335,19 +357,186 @@ export default function MovieDetails() {
                 className="btn outline"
                 style={{ flex: 1 }}
                 onClick={() => setShowSnackModal(false)}
-                disabled={bookingLoading}
               >
-                Back
+                Cancel
               </button>
               <button
                 className="btn"
                 style={{ flex: 2 }}
-                onClick={confirmBooking}
-                disabled={bookingLoading}
+                onClick={proceedToPayment}
               >
-                {bookingLoading ? 'Processing...' : `Pay ₹${grandTotal} & Confirm`}
+                Proceed to Pay ₹{grandTotal} →
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Gateway Modal */}
+      {showPaymentModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '480px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid var(--border-glass)', paddingBottom: '12px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  🔒 Secure Checkout
+                </h3>
+                <span className="muted" style={{ fontSize: '12px' }}>256-Bit Encrypted Payment</span>
+              </div>
+              <button
+                className="btn small outline"
+                onClick={() => setShowPaymentModal(false)}
+                disabled={paymentProcessing}
+                style={{ padding: '4px 10px' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Total Amount Tag */}
+            <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '12px 16px', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div>
+                <span className="muted" style={{ fontSize: '12px' }}>Amount to Pay</span>
+                <div style={{ fontSize: '22px', fontWeight: 800, color: '#10b981' }}>₹{grandTotal}</div>
+              </div>
+              <span style={{ fontSize: '12px', background: 'rgba(255,255,255,0.1)', padding: '4px 10px', borderRadius: '20px' }}>
+                {selected.length} Tickets
+              </span>
+            </div>
+
+            {/* Payment Mode Selector Tabs */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '18px' }}>
+              <button
+                type="button"
+                className={`btn outline small ${paymentMethod === 'upi' ? 'active' : ''}`}
+                style={{
+                  borderColor: paymentMethod === 'upi' ? '#f43f5e' : 'var(--border-glass)',
+                  background: paymentMethod === 'upi' ? 'rgba(244,63,94,0.15)' : 'transparent',
+                  color: paymentMethod === 'upi' ? '#fff' : 'var(--text-muted)'
+                }}
+                onClick={() => setPaymentMethod('upi')}
+              >
+                📱 UPI / QR
+              </button>
+              <button
+                type="button"
+                className={`btn outline small ${paymentMethod === 'card' ? 'active' : ''}`}
+                style={{
+                  borderColor: paymentMethod === 'card' ? '#f43f5e' : 'var(--border-glass)',
+                  background: paymentMethod === 'card' ? 'rgba(244,63,94,0.15)' : 'transparent',
+                  color: paymentMethod === 'card' ? '#fff' : 'var(--text-muted)'
+                }}
+                onClick={() => setPaymentMethod('card')}
+              >
+                💳 Cards
+              </button>
+              <button
+                type="button"
+                className={`btn outline small ${paymentMethod === 'netbanking' ? 'active' : ''}`}
+                style={{
+                  borderColor: paymentMethod === 'netbanking' ? '#f43f5e' : 'var(--border-glass)',
+                  background: paymentMethod === 'netbanking' ? 'rgba(244,63,94,0.15)' : 'transparent',
+                  color: paymentMethod === 'netbanking' ? '#fff' : 'var(--text-muted)'
+                }}
+                onClick={() => setPaymentMethod('netbanking')}
+              >
+                🏦 NetBanking
+              </button>
+            </div>
+
+            {/* Dynamic Payment Method Forms */}
+            {paymentMethod === 'upi' && (
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ textAlign: 'center', padding: '16px', background: '#fff', borderRadius: '12px', color: '#000', marginBottom: '14px' }}>
+                  <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '4px' }}>Scan with Any UPI App</div>
+                  <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '10px' }}>GPay • PhonePe • Paytm • BHIM</div>
+                  <div style={{ margin: '0 auto', width: '130px', height: '130px', background: '#f1f5f9', border: '2px solid #cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px' }}>
+                    <span style={{ fontSize: '48px' }}>📲</span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '6px' }}>QR Code valid for 5 mins</div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '10px 0' }}>
+                  <span className="muted" style={{ fontSize: '12px' }}>Or enter UPI ID:</span>
+                </div>
+                <input
+                  placeholder="username@okhdfcbank / paytm"
+                  value={upiId}
+                  onChange={(e) => setUpiId(e.target.value)}
+                  style={{ margin: 0 }}
+                />
+              </div>
+            )}
+
+            {paymentMethod === 'card' && (
+              <div style={{ marginBottom: '16px' }}>
+                <div>
+                  <span className="dim" style={{ fontSize: '12px' }}>Card Number</span>
+                  <input
+                    placeholder="4532 •••• •••• 8892"
+                    maxLength={19}
+                    value={cardData.number}
+                    onChange={(e) => setCardData({ ...cardData, number: e.target.value })}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <div style={{ flex: 1 }}>
+                    <span className="dim" style={{ fontSize: '12px' }}>Expiry</span>
+                    <input
+                      placeholder="MM / YY"
+                      maxLength={5}
+                      value={cardData.expiry}
+                      onChange={(e) => setCardData({ ...cardData, expiry: e.target.value })}
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <span className="dim" style={{ fontSize: '12px' }}>CVV</span>
+                    <input
+                      type="password"
+                      placeholder="•••"
+                      maxLength={4}
+                      value={cardData.cvv}
+                      onChange={(e) => setCardData({ ...cardData, cvv: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <span className="dim" style={{ fontSize: '12px' }}>Cardholder Name</span>
+                  <input
+                    placeholder="Name on card"
+                    value={cardData.name}
+                    onChange={(e) => setCardData({ ...cardData, name: e.target.value })}
+                  />
+                </div>
+              </div>
+            )}
+
+            {paymentMethod === 'netbanking' && (
+              <div style={{ marginBottom: '16px' }}>
+                <span className="dim" style={{ fontSize: '12px' }}>Select Popular Bank</span>
+                <select style={{ marginTop: '6px' }}>
+                  <option>HDFC Bank</option>
+                  <option>State Bank of India (SBI)</option>
+                  <option>ICICI Bank</option>
+                  <option>Axis Bank</option>
+                  <option>Kotak Mahindra Bank</option>
+                  <option>Punjab National Bank</option>
+                </select>
+              </div>
+            )}
+
+            <button
+              className="btn"
+              style={{ width: '100%', padding: '14px' }}
+              disabled={paymentProcessing}
+              onClick={processPaymentAndConfirm}
+            >
+              {paymentProcessing ? (
+                <span>🔄 Verifying Payment with Bank...</span>
+              ) : (
+                <span>Pay ₹{grandTotal} & Confirm Tickets 🎟️</span>
+              )}
+            </button>
           </div>
         </div>
       )}
