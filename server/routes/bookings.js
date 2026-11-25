@@ -1,20 +1,48 @@
 import express from 'express';
+import crypto from 'crypto';
 import Booking from '../models/Booking.js';
 import Show from '../models/Show.js';
 import { protect, adminOnly } from '../middleware/auth.js';
+import {
+  SNACKS_CATALOG,
+  PROMO_CODES,
+  calculateSeatsTotal,
+  evaluatePromo,
+} from '../utils/pricing.js';
 
 const router = express.Router();
+
+const SEAT_PATTERN = /^[A-H](10|[1-9])$/;
+
+// Public promo offers list
+router.get('/promos', (req, res) => {
+  res.json(PROMO_CODES);
+});
+
+// Validate promo code before payment
+router.post('/validate-promo', (req, res) => {
+  const { code, subtotal = 0 } = req.body;
+  const result = evaluatePromo(code, Number(subtotal) || 0);
+  if (!result.valid) return res.status(400).json(result);
+  res.json(result);
+});
 
 // Booking banao
 router.post('/', protect, async (req, res) => {
   try {
-    const { showId, snacks = [] } = req.body;
-    const seats = [...new Set(req.body.seats || [])];
+    const { showId, snacks = [], promoCode = '', paymentMethod = 'UPI' } = req.body;
+    const seats = [...new Set((req.body.seats || []).map((s) => String(s).toUpperCase()))];
     if (!seats.length) return res.status(400).json({ message: 'Kam se kam ek seat chunein' });
     if (seats.length > 10) return res.status(400).json({ message: 'Ek baar mein max 10 seats' });
+    if (seats.some((s) => !SEAT_PATTERN.test(s))) {
+      return res.status(400).json({ message: 'Invalid seat selection' });
+    }
 
     const show = await Show.findById(showId);
     if (!show) return res.status(404).json({ message: 'Show nahi mila' });
+    if (new Date(show.startTime).getTime() < Date.now() - 30 * 60 * 1000) {
+      return res.status(400).json({ message: 'Ye show time nikal chuka hai' });
+    }
 
     // Atomic update: double booking protection
     const updated = await Show.findOneAndUpdate(
@@ -22,20 +50,58 @@ router.post('/', protect, async (req, res) => {
       { $push: { bookedSeats: { $each: seats } } },
       { new: true }
     );
-    if (!updated) return res.status(409).json({ message: 'Kuch seats pehle hi book ho chuki hain, dobara chunein' });
+    if (!updated) {
+      return res.status(409).json({ message: 'Kuch seats pehle hi book ho chuki hain, dobara chunein' });
+    }
 
-    const seatsAmount = seats.length * show.price;
-    const snacksAmount = (snacks || []).reduce((sum, s) => sum + (s.qty || 0) * (s.price || 0), 0);
-    const totalAmount = req.body.totalAmount ? Number(req.body.totalAmount) : (seatsAmount + snacksAmount);
+    const sanitizedSnacks = (Array.isArray(snacks) ? snacks : [])
+      .map((item) => {
+        const qty = Math.max(0, Math.min(20, parseInt(item.qty, 10) || 0));
+        const catalogPrice = SNACKS_CATALOG[item.name];
+        const unitPrice = catalogPrice !== undefined ? catalogPrice : Math.max(0, Number(item.price) || 0);
+        return qty > 0 && item.name ? { name: item.name, qty, price: unitPrice } : null;
+      })
+      .filter(Boolean);
+
+    const seatSubtotal = calculateSeatsTotal(seats, show.price);
+    const snacksTotal = sanitizedSnacks.reduce((sum, s) => sum + s.qty * s.price, 0);
+    const convenienceFee = 30;
+    const grossTotal = seatSubtotal + snacksTotal + convenienceFee;
+
+    let discountAmount = 0;
+    let appliedCode = '';
+    if (promoCode && promoCode.trim()) {
+      const promoResult = evaluatePromo(promoCode, seatSubtotal + snacksTotal);
+      if (promoResult.valid) {
+        discountAmount = promoResult.discount;
+        appliedCode = promoResult.code;
+      }
+    }
+
+    const totalAmount = Math.max(0, grossTotal - discountAmount);
+    const bookingCode = `CB-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 
     const booking = await Booking.create({
+      bookingCode,
       user: req.user._id,
       show: showId,
       seats,
-      snacks: snacks || [],
+      snacks: sanitizedSnacks,
+      seatSubtotal,
+      snacksTotal,
+      convenienceFee,
+      discountAmount,
+      promoCode: appliedCode,
+      paymentMethod: String(paymentMethod || 'UPI').toUpperCase(),
+      paymentStatus: 'paid',
       totalAmount,
     });
-    res.status(201).json(booking);
+
+    const populated = await Booking.findById(booking._id).populate({
+      path: 'show',
+      populate: { path: 'movie' },
+    });
+    res.status(201).json(populated);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -58,6 +124,7 @@ router.put('/:id/cancel', protect, async (req, res) => {
   if (booking.status === 'cancelled') return res.status(400).json({ message: 'Pehle se cancel hai' });
 
   booking.status = 'cancelled';
+  booking.paymentStatus = 'refunded';
   await booking.save();
   await Show.updateOne({ _id: booking.show }, { $pull: { bookedSeats: { $in: booking.seats } } });
   res.json(booking);

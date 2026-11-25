@@ -1,22 +1,76 @@
-import { Routes, Route, Link, NavLink, Navigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Routes, Route, Link, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from './context/AuthContext.jsx';
+import { ToastProvider } from './context/ToastContext.jsx';
+import api from './api.js';
 import Home from './pages/Home.jsx';
 import MovieDetails from './pages/MovieDetails.jsx';
 import AuthPage from './pages/AuthPage.jsx';
 import MyBookings from './pages/MyBookings.jsx';
+import Profile from './pages/Profile.jsx';
 import Admin from './pages/Admin.jsx';
 
 function Navbar() {
-  const { user, logout } = useAuth();
+  const { user, logout, city, setCity } = useAuth();
+  const [cities, setCities] = useState(['Mumbai', 'Delhi', 'Noida']);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    api
+      .get('/shows/cities')
+      .then((r) => {
+        if (Array.isArray(r.data) && r.data.length > 0) {
+          setCities(r.data);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const goUpcoming = (e) => {
+    e.preventDefault();
+    if (location.pathname !== '/') {
+      navigate('/#upcoming-panel');
+      setTimeout(() => {
+        document.getElementById('upcoming-panel')?.scrollIntoView({ behavior: 'smooth' });
+      }, 120);
+    } else {
+      document.getElementById('upcoming-panel')?.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
   return (
     <nav className="navbar">
-      <Link to="/" className="logo">
-        <span>🎬</span> CineBook <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '12px', background: 'rgba(244, 63, 94, 0.2)', color: '#f43f5e', border: '1px solid rgba(244, 63, 94, 0.3)' }}>PRO</span>
-      </Link>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+        <Link to="/" className="logo">
+          <span>🎬</span> CineBook{' '}
+          <span className="logo-badge">PRO</span>
+        </Link>
+
+        <div className="city-picker">
+          <span aria-hidden="true">📍</span>
+          <select
+            aria-label="Select City"
+            value={city}
+            onChange={(e) => setCity(e.target.value)}
+          >
+            <option value="All">All Cities</option>
+            {cities.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
       <div className="nav-links">
-        <NavLink to="/" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+        <NavLink to="/" end className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
           Movies
         </NavLink>
+        <a href="#upcoming-panel" onClick={goUpcoming} className="nav-link upcoming-nav-pill">
+          🚀 Coming Soon
+        </a>
         {user && (
           <NavLink to="/my-bookings" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
             🎟️ My Tickets
@@ -29,18 +83,22 @@ function Navbar() {
         )}
         {user ? (
           <>
-            <div className="user-badge">
+            <NavLink to="/profile" className="user-badge" title="Profile & Watchlist">
               <span className="avatar-icon">{user.name?.charAt(0).toUpperCase()}</span>
               <span>{user.name}</span>
-            </div>
+            </NavLink>
             <button className="btn small outline" onClick={logout} title="Sign Out">
               Logout
             </button>
           </>
         ) : (
           <>
-            <Link to="/login" className="nav-link">Login</Link>
-            <Link to="/register" className="btn small">Sign Up</Link>
+            <Link to="/login" className="nav-link">
+              Login
+            </Link>
+            <Link to="/register" className="btn small">
+              Sign Up
+            </Link>
           </>
         )}
       </div>
@@ -55,7 +113,7 @@ function AdminRoute({ children }) {
 
 export default function App() {
   return (
-    <>
+    <ToastProvider>
       <Navbar />
       <main className="container">
         <Routes>
@@ -64,9 +122,17 @@ export default function App() {
           <Route path="/login" element={<AuthPage mode="login" />} />
           <Route path="/register" element={<AuthPage mode="register" />} />
           <Route path="/my-bookings" element={<MyBookings />} />
-          <Route path="/admin" element={<AdminRoute><Admin /></AdminRoute>} />
+          <Route path="/profile" element={<Profile />} />
+          <Route
+            path="/admin"
+            element={
+              <AdminRoute>
+                <Admin />
+              </AdminRoute>
+            }
+          />
         </Routes>
       </main>
-    </>
+    </ToastProvider>
   );
 }
