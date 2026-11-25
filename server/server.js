@@ -12,25 +12,51 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// MongoDB connection cache for serverless environments (Vercel)
-let isConnected = false;
+// Serverless-safe MongoDB connection cache
+let connectionPromise = null;
+
 const connectDB = async () => {
-  if (isConnected || mongoose.connection.readyState >= 1) return;
-  try {
-    await mongoose.connect(process.env.MONGO_URI);
-    isConnected = true;
-    console.log('MongoDB connected');
-  } catch (err) {
-    console.error('MongoDB connection error:', err.message);
+  if (mongoose.connection.readyState === 1) return;
+
+  if (!process.env.MONGO_URI) {
+    throw new Error('MONGO_URI environment variable is missing');
   }
+
+  if (!connectionPromise) {
+    connectionPromise = mongoose
+      .connect(process.env.MONGO_URI, {
+        serverSelectionTimeoutMS: 8000,
+      })
+      .then((conn) => {
+        console.log('MongoDB connected');
+        return conn;
+      })
+      .catch((err) => {
+        connectionPromise = null;
+        throw err;
+      });
+  }
+
+  await connectionPromise;
 };
 
 app.use(async (req, res, next) => {
-  await connectDB();
-  next();
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    console.error('MongoDB connection error:', err.message);
+    res.status(500).json({ message: 'Database connection error: ' + err.message });
+  }
 });
 
 app.get('/', (req, res) => res.send('Movie Booking API chal rahi hai'));
+app.get('/api/health', (req, res) => {
+  res.json({
+    ok: mongoose.connection.readyState === 1,
+    readyState: mongoose.connection.readyState,
+  });
+});
 app.use('/api/auth', authRoutes);
 app.use('/api/movies', movieRoutes);
 app.use('/api/shows', showRoutes);
@@ -40,9 +66,11 @@ const PORT = process.env.PORT || 5001;
 
 // Only listen when running standalone server (not on Vercel serverless)
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
-  connectDB().then(() => {
-    app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
-  });
+  connectDB()
+    .then(() => {
+      app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+    })
+    .catch((err) => console.error('MongoDB startup error:', err.message));
 }
 
 export default app;
